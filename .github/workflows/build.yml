@@ -788,7 +788,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ 'macos-15-intel', 'macos-15' ]
+        runner: [ 'macos-15' ]
         buildtype: [ 'release' ]
 
     runs-on: ${{ matrix.runner }}
@@ -832,13 +832,6 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Import certificate file
-        if: github.repository == 'strawberrymusicplayer/strawberry' && github.event.pull_request.head.repo.fork == false
-        uses: apple-actions/import-codesign-certs@v6
-        with:
-          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
-
       - name: Download macOS dependencies
         run: curl -f -O -L https://github.com/strawberrymusicplayer/strawberry-macos-dependencies/releases/latest/download/strawberry-macos-${{env.arch}}-${{env.buildtype}}.tar.xz
 
@@ -868,7 +861,6 @@ jobs:
           -DBUILD_WERROR=ON
           -DUSE_BUNDLE=ON
           -DICU_ROOT="${{env.prefix_path}}"
-          -DAPPLE_DEVELOPER_ID=$(test '${{github.repository}}' = 'strawberrymusicplayer/strawberry' && test '${{github.event.pull_request.base.repo.full_name}}' = '${{github.event.pull_request.head.repo.full_name}}' && echo "383J84DVB6" || echo "")
           -DARCH="${{env.arch}}"
           -DENABLE_SPOTIFY=$(test -f "${{env.prefix_path}}/lib/gstreamer-1.0/libgstspotify.dylib" && echo "ON" || echo "OFF")
           -DENABLE_SPARKLE=ON
@@ -890,53 +882,19 @@ jobs:
         working-directory: build
         run: make deploy
 
-      - name: Manually Codesign
-        if: github.repository == 'strawberrymusicplayer/strawberry' && github.event.pull_request.head.repo.fork == false && matrix.runner == 'macos-15-intel'
-        working-directory: build
-        run: codesign -s 383J84DVB6 -f strawberry.app/Contents/Frameworks/{libpcre2-8.0.dylib,libpcre2-16.0.dylib,libpng16.16.dylib,libfreetype.6.dylib,libzstd.1.dylib,libbrotlicommon.1.dylib,libbrotlienc.1.dylib,libbrotlidec.1.dylib,libsoup-3.0.0.dylib,libnghttp2.14.dylib,libpsl.5.dylib} strawberry.app/Contents/Frameworks/png.framework/png strawberry.app
-
-      - name: Manually Codesign
-        if: github.repository == 'strawberrymusicplayer/strawberry' && github.event.pull_request.head.repo.fork == false && matrix.runner == 'macos-15'
-        working-directory: build
-        run: codesign -s 383J84DVB6 -f strawberry.app/Contents/Frameworks/png.framework/png strawberry.app
-
       - name: Deploy check
         working-directory: build
         run: make deploycheck
-
-      - name: Verify code-signing
-        if: github.repository == 'strawberrymusicplayer/strawberry' && github.event.pull_request.head.repo.fork == false
-        working-directory: build
-        run: codesign --deep -v strawberry.app
 
       - name: Create DMG
         working-directory: build
         run: make dmg
 
-      - name: SSH Setup
-        if: github.repository == 'strawberrymusicplayer/strawberry' && (github.event_name == 'release' || (github.event_name == 'push' && github.event.pull_request.head.repo.fork == false && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ci' || github.ref == 'refs/heads/macos')))
-        uses: shimataro/ssh-key-action@v2
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
         with:
-          known_hosts: ${{secrets.SSH_KNOWN_HOSTS}}
-          key: ${{ secrets.SSH_KEY }}
-
-      - name: Set Upload path
-        id: set-upload-path
-        if: github.repository == 'strawberrymusicplayer/strawberry' && (github.event_name == 'release' || (github.event_name == 'push' && github.event.pull_request.head.repo.fork == false && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/ci' || github.ref == 'refs/heads/macos')))
-        run: |
-          if [ "${{github.event_name}}" = "release" ]; then
-            echo "upload_path=${{secrets.DOWNLOADS_PATH}}/stable_releases/macos" >> $GITHUB_OUTPUT
-          else
-            echo "upload_path=${{secrets.DOWNLOADS_PATH}}/development_releases/macos" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create server path
-        if: steps.set-upload-path.outputs.upload_path != ''
-        run: ssh -p ${{secrets.SSH_PORT}} -o StrictHostKeyChecking=no ${{secrets.SSH_USER}}@${{secrets.SSH_HOST}} mkdir -p ${{steps.set-upload-path.outputs.upload_path}}
-
-      - name: rsync
-        if: steps.set-upload-path.outputs.upload_path != ''
-        run: rsync -e "ssh -p ${{secrets.SSH_PORT}} -o StrictHostKeyChecking=no" -var build/*.dmg ${{secrets.SSH_USER}}@${{secrets.SSH_HOST}}:${{steps.set-upload-path.outputs.upload_path}}/
+          name: strawberry-macos-arm64
+          path: build/*.dmg
 
 
   build-macos-private:
